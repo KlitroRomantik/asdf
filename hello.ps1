@@ -31,6 +31,75 @@ function Send-ToTelegram {
         return $false
     }
     
+    if ([string]::IsNullOrEmpty($script:Config.BotToken) -or $script:Config.BotToken -eq "") {
+        Write-Log "Токен бота не задан. Отправка отключена." "WARN"
+        return $false
+    }
+    if ([string]::IsNullOrEmpty($script:Config.ChatId) -or $script:Config.ChatId -eq "") {
+        Write-Log "Chat ID не задан. Отправка отключена." "WARN"
+        return $false
+    }
+
+    Write-Log "Пытаюсь отправить файл в Telegram..." "INFO"
+
+    try {
+        $uri = "https://api.telegram.org/bot$($script:Config.BotToken)/sendDocument"
+        
+        # Читаем файл в байты
+        $bytes = [System.IO.File]::ReadAllBytes($FilePath)
+        $fileName = [System.IO.Path]::GetFileName($FilePath)
+        
+        # Создаём multipart/form-data вручную (совместимо с PS5.1)
+        $boundary = "---------------------------" + (Get-Random -Maximum 99999999).ToString()
+        $LF = "`r`n"
+        
+        $bodyLines = @()
+        
+        # Поле chat_id
+        $bodyLines += "--$boundary"
+        $bodyLines += "Content-Disposition: form-data; name=`"chat_id`""
+        $bodyLines += ""
+        $bodyLines += $script:Config.ChatId
+        
+        # Поле caption
+        $bodyLines += "--$boundary"
+        $bodyLines += "Content-Disposition: form-data; name=`"caption`""
+        $bodyLines += ""
+        $bodyLines += $Caption
+        
+        # Поле document (файл)
+        $bodyLines += "--$boundary"
+        $bodyLines += "Content-Disposition: form-data; name=`"document`"; filename=`"$fileName`""
+        $bodyLines += "Content-Type: application/zip"
+        $bodyLines += ""
+        $bodyLines += [System.Text.Encoding]::UTF8.GetString($bytes)
+        
+        $bodyLines += "--$boundary--"
+        $bodyLines += ""
+        
+        $body = [string]::Join($LF, $bodyLines)
+        $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+        
+        # Создаём запрос
+        $headers = @{
+            "Content-Type" = "multipart/form-data; boundary=$boundary"
+        }
+        
+        $response = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $bodyBytes
+        
+        if ($response.ok) {
+            Write-Log "Архив успешно отправлен в Telegram!" "INFO"
+            return $true
+        } else {
+            Write-Log "Ошибка Telegram: $($response.description)" "ERROR"
+            return $false
+        }
+    } catch {
+        Write-Log "Исключение при отправке: $_" "ERROR"
+        return $false
+    }
+}
+    
     # Проверяем, что токен и chat ID заданы
     if ([string]::IsNullOrEmpty($script:Config.BotToken) -or $script:Config.BotToken -eq "") {
         Write-Log "Токен бота не задан. Отправка отключена." "WARN"
